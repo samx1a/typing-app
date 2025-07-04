@@ -1,242 +1,356 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { 
-  BarChart3, 
-  TrendingUp, 
-  Target, 
-  Award, 
-  Calendar,
-  Clock,
-  Zap,
-  CheckCircle,
-  XCircle
-} from 'lucide-react';
-import { 
-  LineChart, 
-  Line, 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
+import {
   ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  BarChart,
+  Bar
 } from 'recharts';
+import { Calendar, TrendingUp, Target, Clock, BarChart3, Download, Trash2, RefreshCw, User, BookOpen } from 'lucide-react';
+import { TestResult, storage } from '../services/storage';
+import { AppSettings } from '../services/storage';
+import { useAuth } from '../services/auth';
+import { supabase, UserStats } from '../services/supabaseClient';
+import { getUserVocabStats } from '../services/adaptiveVocab';
+import toast from 'react-hot-toast';
 
-interface TestResult {
-  wpm: number;
-  accuracy: number;
-  errors: number;
-  timeElapsed: number;
-  timestamp: Date;
-  textSource: string;
+interface StatisticsProps {
+  appSettings: AppSettings;
 }
 
-const Statistics: React.FC = () => {
+const Statistics: React.FC<StatisticsProps> = ({ appSettings }) => {
+  const { user } = useAuth();
   const [testResults, setTestResults] = useState<TestResult[]>([]);
+  const [userStats, setUserStats] = useState<UserStats[]>([]);
+  const [userVocabStats, setUserVocabStats] = useState<{
+    total: number;
+    mastered: number;
+    learning: number;
+    review: number;
+    new: number;
+  } | null>(null);
   const [timeRange, setTimeRange] = useState<'week' | 'month' | 'all'>('week');
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Mock data for demonstration
   useEffect(() => {
-    const mockData: TestResult[] = [
-      { wpm: 65, accuracy: 98, errors: 2, timeElapsed: 45, timestamp: new Date(Date.now() - 86400000), textSource: 'quotes' },
-      { wpm: 58, accuracy: 95, errors: 5, timeElapsed: 52, timestamp: new Date(Date.now() - 172800000), textSource: 'programming' },
-      { wpm: 72, accuracy: 99, errors: 1, timeElapsed: 38, timestamp: new Date(Date.now() - 259200000), textSource: 'quotes' },
-      { wpm: 45, accuracy: 92, errors: 8, timeElapsed: 65, timestamp: new Date(Date.now() - 345600000), textSource: 'lorem' },
-      { wpm: 68, accuracy: 97, errors: 3, timeElapsed: 42, timestamp: new Date(Date.now() - 432000000), textSource: 'programming' },
-      { wpm: 55, accuracy: 94, errors: 6, timeElapsed: 48, timestamp: new Date(Date.now() - 518400000), textSource: 'quotes' },
-      { wpm: 78, accuracy: 100, errors: 0, timeElapsed: 35, timestamp: new Date(Date.now() - 604800000), textSource: 'quotes' },
-    ];
-    setTestResults(mockData);
-  }, []);
+    loadData();
+  }, [user, timeRange]);
 
-  const averageWpm = testResults.length > 0 
-    ? Math.round(testResults.reduce((sum, result) => sum + result.wpm, 0) / testResults.length)
+  const loadData = async () => {
+    setIsLoading(true);
+    
+    try {
+      // Load local test results
+      const localResults = storage.getTestResults();
+      setTestResults(localResults);
+      
+      // Load user-specific data if logged in
+      if (user) {
+        await loadUserData();
+      } else {
+        setUserStats([]);
+        setUserVocabStats(null);
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+      toast.error('Failed to load statistics');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadUserData = async () => {
+    if (!user) return;
+
+    try {
+      // Load user stats from Supabase
+      const { data: stats, error: statsError } = await supabase
+        .from('user_stats')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('timestamp', { ascending: false });
+
+      if (statsError) {
+        console.error('Error loading user stats:', statsError);
+      } else {
+        setUserStats(stats || []);
+      }
+
+      // Load user vocabulary stats
+      const vocabStats = await getUserVocabStats(user.id);
+      setUserVocabStats(vocabStats);
+    } catch (error) {
+      console.error('Error loading user data:', error);
+    }
+  };
+
+  // Use user stats if available, otherwise fall back to local stats
+  const activeResults = (user ? userStats : testResults) as (TestResult | UserStats)[];
+
+  const filteredResults = activeResults.filter(result => {
+    const resultDate = new Date(result.timestamp);
+    const now = new Date();
+    
+    switch (timeRange) {
+      case 'week':
+        return resultDate >= new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      case 'month':
+        return resultDate >= new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      case 'all':
+        return true;
+      default:
+        return true;
+    }
+  });
+
+  const averageWpm = filteredResults.length > 0 
+    ? Math.round(filteredResults.reduce((sum, result) => sum + result.wpm, 0) / filteredResults.length)
     : 0;
 
-  const bestWpm = testResults.length > 0 
-    ? Math.max(...testResults.map(result => result.wpm))
+  const bestWpm = filteredResults.length > 0 
+    ? Math.max(...filteredResults.map(result => result.wpm))
     : 0;
 
-  const averageAccuracy = testResults.length > 0 
-    ? Math.round(testResults.reduce((sum, result) => sum + result.accuracy, 0) / testResults.length)
-    : 0;
-
-  const totalTests = testResults.length;
-  const totalTime = testResults.reduce((sum, result) => sum + result.timeElapsed, 0);
+  const totalTests = filteredResults.length;
+  const totalTime = filteredResults.reduce((sum, result) => sum + result.timeElapsed, 0);
 
   // Chart data
-  const wpmProgressData = testResults.map((result, index) => ({
+  const wpmProgressData = filteredResults.slice(-20).map((result, index) => ({
     test: index + 1,
     wpm: result.wpm,
-    accuracy: result.accuracy
+    accuracy: result.accuracy,
+    date: new Date(result.timestamp).toLocaleDateString()
   }));
 
   const accuracyDistribution = [
-    { name: '90-100%', value: testResults.filter(r => r.accuracy >= 90).length },
-    { name: '80-89%', value: testResults.filter(r => r.accuracy >= 80 && r.accuracy < 90).length },
-    { name: '70-79%', value: testResults.filter(r => r.accuracy >= 70 && r.accuracy < 80).length },
-    { name: '<70%', value: testResults.filter(r => r.accuracy < 70).length },
+    { name: '90-100%', value: filteredResults.filter(r => r.accuracy >= 90).length, color: '#10b981' },
+    { name: '80-89%', value: filteredResults.filter(r => r.accuracy >= 80 && r.accuracy < 90).length, color: '#3b82f6' },
+    { name: '70-79%', value: filteredResults.filter(r => r.accuracy >= 70 && r.accuracy < 80).length, color: '#f59e0b' },
+    { name: '<70%', value: filteredResults.filter(r => r.accuracy < 70).length, color: '#ef4444' },
   ];
 
-  const sourceDistribution = [
-    { name: 'Quotes', value: testResults.filter(r => r.textSource === 'quotes').length },
-    { name: 'Programming', value: testResults.filter(r => r.textSource === 'programming').length },
-    { name: 'Lorem', value: testResults.filter(r => r.textSource === 'lorem').length },
+  const wpmDistribution = [
+    { range: '0-30', count: filteredResults.filter(r => r.wpm <= 30).length },
+    { range: '31-50', count: filteredResults.filter(r => r.wpm > 30 && r.wpm <= 50).length },
+    { range: '51-70', count: filteredResults.filter(r => r.wpm > 50 && r.wpm <= 70).length },
+    { range: '71-90', count: filteredResults.filter(r => r.wpm > 70 && r.wpm <= 90).length },
+    { range: '90+', count: filteredResults.filter(r => r.wpm > 90).length },
   ];
 
-  const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444'];
+  const handleExportData = () => {
+    try {
+      const data = storage.exportData();
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `typing-stats-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success('Statistics exported successfully!');
+    } catch (error) {
+      toast.error('Failed to export statistics');
+    }
+  };
+
+  const handleClearData = () => {
+    if (window.confirm('Are you sure you want to clear all test data? This cannot be undone.')) {
+      storage.clearTestResults();
+      loadData();
+      toast.success('Test data cleared');
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <RefreshCw className="animate-spin mx-auto mb-4 text-gray-400" size={32} />
+          <p className="text-gray-500 dark:text-gray-400">Loading statistics...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-100 p-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-8"
-        >
-          <h1 className="text-4xl font-bold gradient-text mb-2">Statistics Dashboard</h1>
-          <p className="text-gray-600">Track your typing progress and performance</p>
-        </motion.div>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-4 transition-colors duration-300">
+      <div className="max-w-6xl mx-auto">
+        <div className="text-center mb-8">
+          <h1 className="text-3xl md:text-4xl font-bold font-sans text-gray-900 dark:text-gray-100 mb-2">Statistics</h1>
+          <p className="text-gray-500 dark:text-gray-400">
+            {user ? 'Your personal typing progress and performance' : 'Your typing progress and performance'}
+          </p>
+          {user && (
+            <div className="mt-2 text-sm text-blue-600 dark:text-blue-400">
+              <User size={14} className="inline mr-1" />
+              Signed in as {user.email}
+            </div>
+          )}
+        </div>
 
-        {/* Time Range Selector */}
+        {/* User Vocabulary Stats */}
+        {user && userVocabStats && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/30 dark:to-indigo-900/30 rounded-lg border border-blue-200 dark:border-blue-700"
+          >
+            <div className="flex items-center justify-center gap-2 mb-4">
+              <BookOpen size={20} className="text-blue-600 dark:text-blue-400" />
+              <h2 className="text-xl font-semibold text-blue-900 dark:text-blue-100">Vocabulary Progress</h2>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div>
+                <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{userVocabStats.total}</div>
+                <div className="text-sm text-blue-700 dark:text-blue-300">Total Words</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-green-600 dark:text-green-400">{userVocabStats.mastered}</div>
+                <div className="text-sm text-green-700 dark:text-green-300">Mastered</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{userVocabStats.learning}</div>
+                <div className="text-sm text-yellow-700 dark:text-yellow-300">Learning</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{userVocabStats.review}</div>
+                <div className="text-sm text-orange-700 dark:text-orange-300">To Review</div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* Controls */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setTimeRange('week')}
+              className={`px-3 py-1 rounded-full text-sm font-mono border transition-colors ${timeRange === 'week' ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+            >
+              Week
+            </button>
+            <button
+              onClick={() => setTimeRange('month')}
+              className={`px-3 py-1 rounded-full text-sm font-mono border transition-colors ${timeRange === 'month' ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => setTimeRange('all')}
+              className={`px-3 py-1 rounded-full text-sm font-mono border transition-colors ${timeRange === 'all' ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 border-gray-300 dark:border-gray-600' : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+            >
+              All Time
+            </button>
+          </div>
+          
+          <div className="flex gap-2">
+            <button
+              onClick={handleExportData}
+              className="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-mono border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            >
+              <Download size={14} />
+              Export
+            </button>
+            <button
+              onClick={handleClearData}
+              className="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-mono border border-red-200 dark:border-red-700 text-red-700 dark:text-red-200 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            >
+              <Trash2 size={14} />
+              Clear Data
+            </button>
+          </div>
+        </div>
+
+        {/* Key Stats */}
         <motion.div 
-          className="flex justify-center mb-8"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.1 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8"
         >
-          <div className="flex gap-2 bg-white/50 rounded-lg p-1">
-            {(['week', 'month', 'all'] as const).map((range) => (
-              <button
-                key={range}
-                onClick={() => setTimeRange(range)}
-                className={`px-4 py-2 rounded-md font-medium transition-all ${
-                  timeRange === range
-                    ? 'bg-primary-500 text-white shadow-lg'
-                    : 'text-gray-700 hover:bg-white/70'
-                }`}
-              >
-                {range.charAt(0).toUpperCase() + range.slice(1)}
-              </button>
-            ))}
+          <div className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 flex flex-col items-center">
+            <TrendingUp className="text-blue-500 mb-2" size={24} />
+            <div className="text-xs text-gray-500 mb-1">Average WPM</div>
+            <div className="font-mono text-2xl text-gray-900 dark:text-gray-100">{averageWpm}</div>
+          </div>
+          <div className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 flex flex-col items-center">
+            <Target className="text-green-500 mb-2" size={24} />
+            <div className="text-xs text-gray-500 mb-1">Best WPM</div>
+            <div className="font-mono text-2xl text-gray-900 dark:text-gray-100">{bestWpm}</div>
+          </div>
+          <div className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 flex flex-col items-center">
+            <BarChart3 className="text-purple-500 mb-2" size={24} />
+            <div className="text-xs text-gray-500 mb-1">Tests Taken</div>
+            <div className="font-mono text-2xl text-gray-900 dark:text-gray-100">{totalTests}</div>
+          </div>
+          <div className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 flex flex-col items-center">
+            <Clock className="text-orange-500 mb-2" size={24} />
+            <div className="text-xs text-gray-500 mb-1">Total Time</div>
+            <div className="font-mono text-lg text-gray-900 dark:text-gray-100">{formatTime(totalTime)}</div>
           </div>
         </motion.div>
 
-        {/* Key Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1 }}
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center">
-                <Zap className="w-6 h-6 text-primary-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Average WPM</p>
-                <p className="text-2xl font-bold text-primary-600">{averageWpm}</p>
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.2 }}
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-success-100 rounded-lg flex items-center justify-center">
-                <Target className="w-6 h-6 text-success-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Best WPM</p>
-                <p className="text-2xl font-bold text-success-600">{bestWpm}</p>
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.3 }}
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
-                <CheckCircle className="w-6 h-6 text-yellow-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Avg Accuracy</p>
-                <p className="text-2xl font-bold text-yellow-600">{averageAccuracy}%</p>
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.4 }}
-          >
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <BarChart3 className="w-6 h-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-600">Tests Taken</p>
-                <p className="text-2xl font-bold text-purple-600">{totalTests}</p>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          {/* WPM Progress Chart */}
           <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.5 }}
+            transition={{ delay: 0.1 }}
+            className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6"
           >
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <TrendingUp size={24} />
-              WPM Progress
-            </h3>
+            <div className="text-sm text-gray-500 mb-4">WPM Progress (Last 20 Tests)</div>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={wpmProgressData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="test" />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="wpm" stroke="#3b82f6" strokeWidth={3} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="test" hide />
+                <YAxis hide />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: appSettings.theme === 'dark' ? '#374151' : '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: appSettings.theme === 'dark' ? '#f3f4f6' : '#374151'
+                  }}
+                />
+                <Line type="monotone" dataKey="wpm" stroke="#6366f1" strokeWidth={2} dot={{ fill: '#6366f1', strokeWidth: 2, r: 4 }} />
               </LineChart>
             </ResponsiveContainer>
           </motion.div>
 
-          {/* Accuracy Distribution */}
           <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.6 }}
+            transition={{ delay: 0.2 }}
+            className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6"
           >
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Target size={24} />
-              Accuracy Distribution
-            </h3>
+            <div className="text-sm text-gray-500 mb-4">Accuracy Distribution</div>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={accuracyDistribution}
+                  data={accuracyDistribution.filter(d => d.value > 0)}
                   cx="50%"
                   cy="50%"
                   labelLine={false}
@@ -245,109 +359,74 @@ const Statistics: React.FC = () => {
                   fill="#8884d8"
                   dataKey="value"
                 >
-                  {accuracyDistribution.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  {accuracyDistribution.filter(d => d.value > 0).map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: appSettings.theme === 'dark' ? '#374151' : '#ffffff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    color: appSettings.theme === 'dark' ? '#f3f4f6' : '#374151'
+                  }}
+                />
               </PieChart>
             </ResponsiveContainer>
           </motion.div>
         </div>
 
-        {/* Additional Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          {/* Text Source Distribution */}
-          <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.7 }}
-          >
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Award size={24} />
-              Text Source Usage
-            </h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={sourceDistribution}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="value" fill="#8b5cf6" />
-              </BarChart>
-            </ResponsiveContainer>
-          </motion.div>
-
-          {/* Performance Summary */}
-          <motion.div 
-            className="glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.8 }}
-          >
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Clock size={24} />
-              Performance Summary
-            </h3>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-3 bg-white/50 rounded-lg">
-                <span className="text-gray-600">Total Time Typing</span>
-                <span className="font-semibold">{Math.floor(totalTime / 60)}m {totalTime % 60}s</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-white/50 rounded-lg">
-                <span className="text-gray-600">Average Test Duration</span>
-                <span className="font-semibold">{Math.round(totalTime / totalTests)}s</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-white/50 rounded-lg">
-                <span className="text-gray-600">Improvement Rate</span>
-                <span className="font-semibold text-success-600">+12%</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-white/50 rounded-lg">
-                <span className="text-gray-600">Consistency Score</span>
-                <span className="font-semibold text-primary-600">85%</span>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-
-        {/* Recent Activity */}
+        {/* WPM Distribution Chart */}
         <motion.div 
-          className="glass rounded-2xl p-6 shadow-xl"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.9 }}
+          transition={{ delay: 0.3 }}
+          className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 mb-8"
         >
-          <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Calendar size={24} />
-            Recent Activity
-          </h3>
-          <div className="space-y-3">
-            {testResults.slice(0, 5).map((result, index) => (
-              <motion.div
-                key={index}
-                className="flex items-center justify-between p-4 bg-white/50 rounded-lg"
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 1 + index * 0.1 }}
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-3 h-3 rounded-full ${
-                    result.wpm >= 60 ? 'bg-success-500' :
-                    result.wpm >= 40 ? 'bg-yellow-500' : 'bg-error-500'
-                  }`} />
-                  <div>
-                    <p className="font-medium">{result.wpm} WPM</p>
-                    <p className="text-sm text-gray-600">{result.textSource}</p>
-                  </div>
+          <div className="text-sm text-gray-500 mb-4">WPM Distribution</div>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={wpmDistribution}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="range" />
+              <YAxis />
+              <Tooltip 
+                contentStyle={{ 
+                  backgroundColor: appSettings.theme === 'dark' ? '#374151' : '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: appSettings.theme === 'dark' ? '#f3f4f6' : '#374151'
+                }}
+              />
+              <Bar dataKey="count" fill="#6366f1" />
+            </BarChart>
+          </ResponsiveContainer>
+        </motion.div>
+
+        {/* Recent Results */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.4 }}
+          className="rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6"
+        >
+          <div className="text-sm text-gray-500 mb-4">Recent Results</div>
+          {filteredResults.length > 0 ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {filteredResults.slice(0, 12).map((result, idx) => (
+                <div key={idx} className="px-3 py-2 rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-xs font-mono text-gray-700 dark:text-gray-200">
+                  <div className="font-semibold">{result.wpm} WPM</div>
+                  <div>{result.accuracy}%</div>
+                  <div className="text-gray-500">{Math.floor(result.timeElapsed)}s</div>
                 </div>
-                <div className="text-right">
-                  <p className="text-sm text-gray-600">{result.accuracy}% accuracy</p>
-                  <p className="text-sm text-gray-600">{Math.floor(result.timeElapsed)}s</p>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <Calendar size={48} className="mx-auto mb-4 opacity-50" />
+              <p>No test results found for this time period.</p>
+              <p className="text-sm">Start typing to see your statistics!</p>
+            </div>
+          )}
         </motion.div>
       </div>
     </div>

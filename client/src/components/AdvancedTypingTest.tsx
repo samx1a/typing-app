@@ -1,21 +1,20 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { 
-  Play, 
   RotateCcw, 
-  Settings, 
-  BarChart3, 
-  Target, 
-  Clock, 
-  Zap,
-  CheckCircle,
-  XCircle,
-  TrendingUp,
-  Award
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import toast from 'react-hot-toast';
 import Confetti from 'react-confetti';
+import { textGenerator } from '../services/textGenerator';
+import { vocabularyGenerator, VocabularyWord } from '../services/vocabularyGenerator';
+import { soundEffects } from '../services/soundEffects';
+import { storage, TestResult, AppSettings } from '../services/storage';
+import { useAuth } from '../services/auth';
+import { getNextVocabWord, updateVocabProgress, getUserVocabStats } from '../services/adaptiveVocab';
+import VocabularyDisplay from './VocabularyDisplay';
 
 interface TypingStats {
   wpm: number;
@@ -26,40 +25,12 @@ interface TypingStats {
   charactersCorrect: number;
 }
 
-interface TestResult {
-  wpm: number;
-  accuracy: number;
-  errors: number;
-  timeElapsed: number;
-  timestamp: Date;
+interface AdvancedTypingTestProps {
+  appSettings: AppSettings;
 }
 
-const TEXT_SOURCES = {
-  quotes: [
-    "The only way to do great work is to love what you do. - Steve Jobs",
-    "Success is not final, failure is not fatal: it is the courage to continue that counts. - Winston Churchill",
-    "The future belongs to those who believe in the beauty of their dreams. - Eleanor Roosevelt",
-    "In the middle of difficulty lies opportunity. - Albert Einstein",
-    "The best way to predict the future is to invent it. - Alan Kay",
-    "Life is what happens when you're busy making other plans. - John Lennon",
-    "The journey of a thousand miles begins with one step. - Lao Tzu",
-    "Believe you can and you're halfway there. - Theodore Roosevelt"
-  ],
-  programming: [
-    "const express = require('express'); const app = express(); app.listen(3000, () => console.log('Server running'));",
-    "function fibonacci(n) { if (n <= 1) return n; return fibonacci(n-1) + fibonacci(n-2); }",
-    "const React = require('react'); const Component = () => { return <div>Hello World</div>; };",
-    "async function fetchData() { try { const response = await fetch('/api/data'); return response.json(); } catch (error) { console.error(error); } }",
-    "class Database { constructor() { this.connection = null; } async connect() { this.connection = await createConnection(); } }"
-  ],
-  lorem: [
-    "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.",
-    "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.",
-    "Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."
-  ]
-};
-
-const AdvancedTypingTest: React.FC = () => {
+const AdvancedTypingTest: React.FC<AdvancedTypingTestProps> = ({ appSettings }) => {
+  const { user } = useAuth();
   const [currentText, setCurrentText] = useState('');
   const [userInput, setUserInput] = useState('');
   const [isTestActive, setIsTestActive] = useState(false);
@@ -73,49 +44,152 @@ const AdvancedTypingTest: React.FC = () => {
     charactersCorrect: 0
   });
   const [testResults, setTestResults] = useState<TestResult[]>([]);
-  const [textSource, setTextSource] = useState<'quotes' | 'programming' | 'lorem'>('quotes');
   const [showResults, setShowResults] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [wpmHistory, setWpmHistory] = useState<{time: number, wpm: number}[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [currentTextSource, setCurrentTextSource] = useState(appSettings.textSource);
+  const [currentVocabularyWord, setCurrentVocabularyWord] = useState<VocabularyWord | null>(null);
+  const [showVocabularyDisplay, setShowVocabularyDisplay] = useState(false);
+  const [userVocabStats, setUserVocabStats] = useState<{
+    total: number;
+    mastered: number;
+    learning: number;
+    review: number;
+    new: number;
+  } | null>(null);
   
   const inputRef = useRef<HTMLInputElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const getRandomText = useCallback(() => {
-    const texts = TEXT_SOURCES[textSource];
-    return texts[Math.floor(Math.random() * texts.length)];
-  }, [textSource]);
+  // Font size class for typing area
+  let fontSizeClass = 'text-2xl';
+  if (appSettings.fontSize === 'small') fontSizeClass = 'text-lg';
+  else if (appSettings.fontSize === 'large') fontSizeClass = 'text-4xl';
 
-  const startTest = () => {
-    const newText = getRandomText();
-    setCurrentText(newText);
-    setUserInput('');
-    setIsTestActive(true);
-    setStartTime(Date.now());
-    setStats({
-      wpm: 0,
-      accuracy: 100,
-      errors: 0,
-      timeElapsed: 0,
-      charactersTyped: 0,
-      charactersCorrect: 0
-    });
-    setWpmHistory([]);
-    setShowResults(false);
-    setShowConfetti(false);
-    
-    if (inputRef.current) {
-      inputRef.current.focus();
+  // Load test results on mount
+  useEffect(() => {
+    const results = storage.getTestResults();
+    setTestResults(results);
+  }, []);
+
+  // Load user vocabulary stats when user changes
+  useEffect(() => {
+    if (user) {
+      loadUserVocabStats();
+    } else {
+      setUserVocabStats(null);
     }
+  }, [user]);
 
-    // Start interval for real-time stats
-    intervalRef.current = setInterval(() => {
-      if (startTime) {
-        const timeElapsed = (Date.now() - startTime) / 1000;
-        setStats(prev => ({ ...prev, timeElapsed }));
-      }
-    }, 100);
+  const loadUserVocabStats = async () => {
+    if (!user) return;
+    
+    try {
+      const stats = await getUserVocabStats(user.id);
+      setUserVocabStats(stats);
+    } catch (error) {
+      console.error('Error loading user vocab stats:', error);
+    }
   };
+
+  // Update sound effects when settings change
+  useEffect(() => {
+    soundEffects.setEnabled(appSettings.soundEnabled);
+    soundEffects.setVolume(appSettings.soundVolume);
+  }, [appSettings.soundEnabled, appSettings.soundVolume]);
+
+  // Focus input when test starts or when not showing results
+  useEffect(() => {
+    if (isTestActive && !showResults && !isLoading) {
+      inputRef.current?.focus();
+    }
+  }, [isTestActive, showResults, isLoading]);
+
+  const fetchRandomText = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      let text: string;
+      let vocabularyWord: VocabularyWord | null = null;
+
+      if (appSettings.textSource === 'vocabulary') {
+        if (user) {
+          // Use adaptive vocabulary for logged-in users
+          const nextWord = await getNextVocabWord(user.id);
+          if (nextWord) {
+            // Find the word in our vocabulary generator
+            const allWords = vocabularyGenerator['vocabularyWords'] || [];
+            const wordData = allWords.find(w => w.word === nextWord);
+            if (wordData) {
+              vocabularyWord = wordData;
+              // Generate text with this specific word
+              const result = await vocabularyGenerator.generateVocabularyText({
+                difficulty: appSettings.vocabularyDifficulty || 'mixed',
+                category: appSettings.vocabularyCategory,
+                length: appSettings.textLength
+              });
+              text = result.text;
+              setCurrentVocabularyWord(vocabularyWord);
+            } else {
+              // Fallback to random word
+              const result = await vocabularyGenerator.generateVocabularyText({
+                difficulty: appSettings.vocabularyDifficulty || 'mixed',
+                category: appSettings.vocabularyCategory,
+                length: appSettings.textLength
+              });
+              text = result.text;
+              vocabularyWord = result.word;
+              setCurrentVocabularyWord(vocabularyWord);
+            }
+          } else {
+            // Fallback to random word
+            const result = await vocabularyGenerator.generateVocabularyText({
+              difficulty: appSettings.vocabularyDifficulty || 'mixed',
+              category: appSettings.vocabularyCategory,
+              length: appSettings.textLength
+            });
+            text = result.text;
+            vocabularyWord = result.word;
+            setCurrentVocabularyWord(vocabularyWord);
+          }
+        } else {
+          // For non-logged-in users, use regular vocabulary generation
+          const result = await vocabularyGenerator.generateVocabularyText({
+            difficulty: appSettings.vocabularyDifficulty || 'mixed',
+            category: appSettings.vocabularyCategory,
+            length: appSettings.textLength
+          });
+          text = result.text;
+          vocabularyWord = result.word;
+          setCurrentVocabularyWord(vocabularyWord);
+        }
+      } else {
+        // Generate regular text
+        text = await textGenerator.generateText({
+          source: appSettings.textSource,
+          length: appSettings.textLength,
+          language: 'english'
+        });
+        setCurrentVocabularyWord(null);
+      }
+
+      setCurrentText(text);
+      setCurrentTextSource(appSettings.textSource);
+    } catch (error) {
+      console.error('Failed to fetch text:', error);
+      toast.error('Failed to load text. Please try again.');
+      // Fallback text
+      setCurrentText('The quick brown fox jumps over the lazy dog.');
+      setCurrentVocabularyWord(null);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [appSettings.textSource, appSettings.textLength, appSettings.vocabularyDifficulty, appSettings.vocabularyCategory, user]);
+
+  // Load text on component mount
+  useEffect(() => {
+    fetchRandomText();
+  }, [fetchRandomText]);
 
   const resetTest = () => {
     setIsTestActive(false);
@@ -131,10 +205,17 @@ const AdvancedTypingTest: React.FC = () => {
     });
     setShowResults(false);
     setShowConfetti(false);
+    setShowVocabularyDisplay(false);
+    setWpmHistory([]);
     
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
     }
+    
+    // Focus input after reset
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
   };
 
   const calculateStats = useCallback((input: string) => {
@@ -172,11 +253,28 @@ const AdvancedTypingTest: React.FC = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
+    const previousLength = userInput.length;
+    
     setUserInput(value);
     
+    // Start timer on first keystroke
     if (!isTestActive && value.length === 1) {
       setIsTestActive(true);
       setStartTime(Date.now());
+      soundEffects.playTestStart();
+    }
+    
+    // Play sound effects
+    if (value.length > previousLength) {
+      // Check if the new character is correct
+      const newChar = value[value.length - 1];
+      const expectedChar = currentText[value.length - 1];
+      
+      if (newChar === expectedChar) {
+        soundEffects.playKeyPress();
+      } else {
+        soundEffects.playKeyError();
+      }
     }
     
     const newStats = calculateStats(value);
@@ -193,12 +291,19 @@ const AdvancedTypingTest: React.FC = () => {
     if (value === currentText) {
       completeTest();
     }
+
+    if (intervalRef.current) clearInterval(intervalRef.current);
   };
 
-  const completeTest = () => {
+  const completeTest = async () => {
     setIsTestActive(false);
     setShowResults(true);
     setShowConfetti(true);
+    
+    // Show vocabulary display if it's a vocabulary test
+    if (appSettings.textSource === 'vocabulary' && currentVocabularyWord) {
+      setShowVocabularyDisplay(true);
+    }
     
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -211,19 +316,59 @@ const AdvancedTypingTest: React.FC = () => {
         accuracy: finalStats.accuracy,
         errors: finalStats.errors,
         timeElapsed: finalStats.timeElapsed,
-        timestamp: new Date()
+        timestamp: new Date(),
+        textSource: currentTextSource,
+        textLength: appSettings.textLength,
+        charactersTyped: finalStats.charactersTyped,
+        charactersCorrect: finalStats.charactersCorrect
       };
       
+      // Save to storage
+      storage.saveTestResult(result);
+      storage.updateStats(result);
+      
+      // Update user vocabulary progress if logged in and it's a vocabulary test
+      if (user && appSettings.textSource === 'vocabulary' && currentVocabularyWord) {
+        try {
+          await updateVocabProgress(user.id, currentVocabularyWord.word, finalStats.accuracy === 100);
+          // Reload user vocab stats
+          await loadUserVocabStats();
+        } catch (error) {
+          console.error('Error updating vocab progress:', error);
+        }
+      }
+      
+      // Update local state
       setTestResults(prev => [result, ...prev.slice(0, 9)]); // Keep last 10 results
       
+      // Play completion sound
+      soundEffects.playTestComplete();
+      
       // Show toast notification
-      if (finalStats.wpm >= 60) {
-        toast.success(`Excellent! ${finalStats.wpm} WPM with ${finalStats.accuracy}% accuracy!`, {
+      if (appSettings.textSource === 'vocabulary' && currentVocabularyWord) {
+        if (user) {
+          toast.success(`Great job! You learned "${currentVocabularyWord.word}" while typing! 📚`, {
+            icon: '🎓',
+            duration: 5000
+          });
+        } else {
+          toast.success(`Great job! You practiced "${currentVocabularyWord.word}"! Sign in to track your progress! 📚`, {
+            icon: '🎓',
+            duration: 5000
+          });
+        }
+      } else if (finalStats.wpm >= 80) {
+        toast.success(`Incredible! ${finalStats.wpm} WPM with ${finalStats.accuracy}% accuracy! 🚀`, {
           icon: '🏆',
+          duration: 5000
+        });
+      } else if (finalStats.wpm >= 60) {
+        toast.success(`Excellent! ${finalStats.wpm} WPM with ${finalStats.accuracy}% accuracy! 🎯`, {
+          icon: '⭐',
           duration: 4000
         });
       } else if (finalStats.wpm >= 40) {
-        toast.success(`Good job! ${finalStats.wpm} WPM with ${finalStats.accuracy}% accuracy!`, {
+        toast.success(`Good job! ${finalStats.wpm} WPM with ${finalStats.accuracy}% accuracy! 👍`, {
           icon: '👍',
           duration: 3000
         });
@@ -243,8 +388,10 @@ const AdvancedTypingTest: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const currentInterval = intervalRef.current;
+      if (currentInterval) {
+        clearInterval(currentInterval);
       }
     };
   }, []);
@@ -258,237 +405,234 @@ const AdvancedTypingTest: React.FC = () => {
     : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-100 p-4">
+    <div className="w-full min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
       {showConfetti && <Confetti recycle={false} numberOfPieces={200} />}
       
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <motion.div 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center mb-8"
-        >
-          <h1 className="text-4xl font-bold gradient-text mb-2">Advanced Typing Test</h1>
-          <p className="text-gray-600">Improve your typing speed and accuracy</p>
-        </motion.div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Main Typing Area */}
-          <div className="lg:col-span-2">
-            <motion.div 
-              className="glass rounded-2xl p-8 shadow-xl"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-            >
-              {/* Text Source Selector */}
-              <div className="flex gap-2 mb-6">
-                {(['quotes', 'programming', 'lorem'] as const).map((source) => (
-                  <button
-                    key={source}
-                    onClick={() => setTextSource(source)}
-                    className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                      textSource === source
-                        ? 'bg-primary-500 text-white shadow-lg'
-                        : 'bg-white/50 text-gray-700 hover:bg-white/70'
-                    }`}
-                  >
-                    {source.charAt(0).toUpperCase() + source.slice(1)}
-                  </button>
-                ))}
-              </div>
-
-              {/* Test Text Display */}
-              <div className="mb-6">
-                <div className="text-lg leading-relaxed text-gray-800 bg-white/50 rounded-lg p-6 min-h-[120px]">
-                  {currentText.split('').map((char, index) => {
-                    let className = 'text-gray-400';
-                    if (index < userInput.length) {
-                      className = userInput[index] === char ? 'text-success-600' : 'text-error-600 bg-error-100';
-                    }
-                    return (
-                      <span key={index} className={className}>
-                        {char}
-                      </span>
-                    );
-                  })}
-                  {userInput.length < currentText.length && (
-                    <span className="typing-cursor text-primary-500">|</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Input Field */}
-              <div className="mb-6">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={userInput}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  disabled={!isTestActive || showResults}
-                  placeholder={isTestActive ? "Start typing..." : "Click Start to begin"}
-                  className="w-full px-4 py-3 text-lg border-2 border-gray-200 rounded-lg focus:border-primary-500 focus:outline-none transition-colors disabled:bg-gray-100"
-                />
-              </div>
-
-              {/* Control Buttons */}
-              <div className="flex gap-4">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={startTest}
-                  className="flex items-center gap-2 px-6 py-3 bg-success-500 text-white rounded-lg font-medium hover:bg-success-600 transition-colors"
-                >
-                  <Play size={20} />
-                  Start Test
-                </motion.button>
-                
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={resetTest}
-                  className="flex items-center gap-2 px-6 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600 transition-colors"
-                >
-                  <RotateCcw size={20} />
-                  Reset
-                </motion.button>
-              </div>
-            </motion.div>
-          </div>
-
-          {/* Stats Panel */}
-          <div className="space-y-6">
-            {/* Real-time Stats */}
-            <motion.div 
-              className="glass rounded-2xl p-6 shadow-xl"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-            >
-              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <BarChart3 size={24} />
-                Live Stats
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">WPM</span>
-                  <span className="text-2xl font-bold text-primary-600">{stats.wpm}</span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Accuracy</span>
-                  <span className="text-2xl font-bold text-success-600">{stats.accuracy}%</span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Errors</span>
-                  <span className="text-2xl font-bold text-error-600">{stats.errors}</span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Time</span>
-                  <span className="text-lg font-medium text-gray-800">
-                    {Math.floor(stats.timeElapsed)}s
-                  </span>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Historical Stats */}
-            <motion.div 
-              className="glass rounded-2xl p-6 shadow-xl"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.1 }}
-            >
-              <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-                <TrendingUp size={24} />
-                Statistics
-              </h3>
-              
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Average WPM</span>
-                  <span className="text-xl font-bold text-primary-600">{averageWpm}</span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Best WPM</span>
-                  <span className="text-xl font-bold text-success-600">{bestWpm}</span>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-600">Tests Taken</span>
-                  <span className="text-xl font-bold text-gray-800">{testResults.length}</span>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* WPM Chart */}
-            {wpmHistory.length > 1 && (
-              <motion.div 
-                className="glass rounded-2xl p-6 shadow-xl"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.2 }}
-              >
-                <h3 className="text-xl font-semibold mb-4">WPM Progress</h3>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={wpmHistory}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
-                    <YAxis />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="wpm" stroke="#3b82f6" strokeWidth={2} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </motion.div>
-            )}
+      {/* User Vocabulary Stats */}
+      {user && userVocabStats && appSettings.textSource === 'vocabulary' && (
+        <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-700">
+          <div className="text-sm text-blue-800 dark:text-blue-200 text-center">
+            <span className="font-semibold">Your Progress:</span> {userVocabStats.mastered} mastered • {userVocabStats.learning} learning • {userVocabStats.review} to review
           </div>
         </div>
+      )}
+      
+      {/* Text Source Display */}
+      {currentTextSource && (
+        <div className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+          Source: {textGenerator.getSources().find(s => s.id === currentTextSource)?.name || currentTextSource}
+          {currentVocabularyWord && (
+            <span className="ml-2 text-blue-500">
+              • Learning: {currentVocabularyWord.word}
+            </span>
+          )}
+        </div>
+      )}
 
-        {/* Recent Results */}
-        {testResults.length > 0 && (
-          <motion.div 
-            className="mt-8 glass rounded-2xl p-6 shadow-xl"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <h3 className="text-xl font-semibold mb-4 flex items-center gap-2">
-              <Award size={24} />
-              Recent Results
-            </h3>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {testResults.slice(0, 6).map((result, index) => (
-                <motion.div
-                  key={index}
-                  className="bg-white/50 rounded-lg p-4"
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: index * 0.1 }}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm text-gray-500">
-                      {result.timestamp.toLocaleDateString()}
-                    </span>
-                    <span className={`text-sm px-2 py-1 rounded ${
-                      result.wpm >= 60 ? 'bg-success-100 text-success-700' :
-                      result.wpm >= 40 ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {result.wpm} WPM
-                    </span>
-                  </div>
-                  <div className="text-lg font-bold text-primary-600">{result.wpm} WPM</div>
-                  <div className="text-sm text-gray-600">{result.accuracy}% accuracy</div>
-                  <div className="text-sm text-gray-600">{Math.floor(result.timeElapsed)}s</div>
-                </motion.div>
-              ))}
+      {/* Typing area */}
+      <div className="relative w-full max-w-4xl mx-auto flex flex-col items-center">
+        {isLoading ? (
+          <div className="w-full min-h-[80px] flex items-center justify-center">
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100 mx-auto mb-2"></div>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">Loading text...</p>
             </div>
-          </motion.div>
+          </div>
+        ) : (
+          <div
+            className={`w-full min-h-[80px] font-mono text-gray-800 dark:text-gray-100 bg-transparent outline-none select-none text-center tracking-wide ${fontSizeClass} relative leading-relaxed`}
+            tabIndex={0}
+            onClick={() => inputRef.current?.focus()}
+            style={{ letterSpacing: '0.04em' }}
+          >
+            <div className="inline-block relative">
+              {/* Render the text as a single line of spans, with inline cursor */}
+              {currentText.split('').map((char, idx) => {
+                // Insert the cursor right before the next character to type
+                if (
+                  idx === userInput.length &&
+                  isTestActive &&
+                  !showResults &&
+                  appSettings.showCursor
+                ) {
+                  return (
+                    <React.Fragment key={idx}>
+                      <span
+                        className="blinking-cursor"
+                        style={{
+                          display: 'inline-block',
+                          width: '1.5px',
+                          height: '1em',
+                          background: 'currentColor',
+                          verticalAlign: 'bottom',
+                          marginRight: '-1.5px',
+                          position: 'relative',
+                        }}
+                      />
+                      <span
+                        className={
+                          'text-gray-400'
+                        }
+                      >
+                        {char}
+                      </span>
+                    </React.Fragment>
+                  );
+                }
+                // Normal character rendering
+                return (
+                  <span
+                    key={idx}
+                    className={
+                      idx < userInput.length
+                        ? userInput[idx] === char
+                          ? 'text-gray-900 dark:text-gray-100 border-b-2 border-gray-300 dark:border-gray-700'
+                          : 'text-red-500 bg-red-50 dark:bg-red-900/30 underline decoration-red-500'
+                        : 'text-gray-400'
+                    }
+                  >
+                    {char}
+                  </span>
+                );
+              })}
+              {/* If cursor is at the end of the text, render it after the last character */}
+              {userInput.length === currentText.length && isTestActive && !showResults && appSettings.showCursor && (
+                <span
+                  className="blinking-cursor"
+                  style={{
+                    display: 'inline-block',
+                    width: '1.5px',
+                    height: '1em',
+                    background: 'currentColor',
+                    verticalAlign: 'bottom',
+                    marginRight: '-1.5px',
+                    position: 'relative',
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Invisible input for typing */}
+        <input
+          ref={inputRef}
+          type="text"
+          value={userInput}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
+          disabled={showResults || isLoading}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-default"
+          autoFocus
+          spellCheck={false}
+          tabIndex={-1}
+        />
+      </div>
+
+      {/* Stats row */}
+      <div className="flex flex-row items-center justify-center gap-8 mt-8 mb-4 text-base font-medium text-gray-700 dark:text-gray-300">
+        {appSettings.showWpm && (
+          <div>WPM <span className="font-mono text-lg text-gray-900 dark:text-gray-100">{stats.wpm}</span></div>
+        )}
+        {appSettings.showAccuracy && (
+          <div>Accuracy <span className="font-mono text-lg text-gray-900 dark:text-gray-100">{stats.accuracy}%</span></div>
+        )}
+        {appSettings.showErrors && (
+          <div>Errors <span className="font-mono text-lg text-gray-900 dark:text-gray-100">{stats.errors}</span></div>
+        )}
+        {appSettings.showTimer && (
+          <div>Time <span className="font-mono text-lg text-gray-900 dark:text-gray-100">{Math.floor(stats.timeElapsed)}s</span></div>
         )}
       </div>
+
+      {/* Controls */}
+      <div className="flex gap-2 mb-8">
+        <button
+          onClick={resetTest}
+          className="px-4 py-2 rounded-full text-sm font-mono border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center gap-2"
+        >
+          <RotateCcw size={16} />
+          Reset
+        </button>
+        <button
+          onClick={() => soundEffects.setEnabled(!appSettings.soundEnabled)}
+          className={`px-4 py-2 rounded-full text-sm font-mono border border-gray-200 dark:border-gray-700 transition-colors flex items-center gap-2 ${
+            appSettings.soundEnabled 
+              ? 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800' 
+              : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+          }`}
+        >
+          {appSettings.soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+          Sound
+        </button>
+      </div>
+
+      {/* Vocabulary Display */}
+      {currentVocabularyWord && (
+        <VocabularyDisplay 
+          word={currentVocabularyWord} 
+          isVisible={showVocabularyDisplay} 
+        />
+      )}
+
+      {/* Results and charts */}
+      {testResults.length > 0 && (
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-4xl mt-8"
+        >
+          <div className="flex flex-col md:flex-row gap-4 justify-between items-center border-t border-gray-200 dark:border-gray-700 pt-6">
+            <div className="flex flex-col gap-1">
+              <div className="text-sm text-gray-500">Average WPM</div>
+              <div className="font-mono text-lg text-gray-900 dark:text-gray-100">{averageWpm}</div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="text-sm text-gray-500">Best WPM</div>
+              <div className="font-mono text-lg text-gray-900 dark:text-gray-100">{bestWpm}</div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="text-sm text-gray-500">Tests Taken</div>
+              <div className="font-mono text-lg text-gray-900 dark:text-gray-100">{testResults.length}</div>
+            </div>
+          </div>
+          
+          {/* WPM Chart */}
+          {wpmHistory.length > 1 && (
+            <div className="mt-6">
+              <div className="text-sm text-gray-500 mb-2">WPM Progress</div>
+              <ResponsiveContainer width="100%" height={120}>
+                <LineChart data={wpmHistory} margin={{ left: 0, right: 0, top: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                  <XAxis dataKey="time" hide />
+                  <YAxis hide />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: appSettings.theme === 'dark' ? '#374151' : '#ffffff',
+                      border: 'none',
+                      borderRadius: '8px',
+                      color: appSettings.theme === 'dark' ? '#f3f4f6' : '#374151'
+                    }}
+                  />
+                  <Line type="monotone" dataKey="wpm" stroke="#6366f1" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          
+          {/* Recent Results */}
+          <div className="mt-6">
+            <div className="text-sm text-gray-500 mb-2">Recent Results</div>
+            <div className="flex flex-wrap gap-2">
+              {testResults.slice(0, 6).map((result, idx) => (
+                <div key={idx} className="px-3 py-2 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs font-mono text-gray-700 dark:text-gray-200">
+                  <span>{result.wpm} WPM</span> · <span>{result.accuracy}%</span> · <span>{Math.floor(result.timeElapsed)}s</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 };

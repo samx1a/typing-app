@@ -75,6 +75,17 @@ function TypingBox() {
         <p>WPM: {wpm}</p>
         <p>Accuracy: {accuracy}%</p>
       </div>
+
+      <span
+        className="absolute left-0 top-0 bg-black dark:bg-white animate-blink"
+        style={{
+          width: '2px',
+          height: '14px',
+          display: 'inline-block',
+          borderRadius: '1px',
+          zIndex: 1,
+        }}
+      />
     </div>
   );
 }
