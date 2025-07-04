@@ -1,179 +1,117 @@
-# SpeedType - Advanced Typing Test Application
+# SpeedType - A Typing App I Built
 
-A modern, feature-rich typing test application built with React, TypeScript, and Tailwind CSS. Perfect for improving typing speed and accuracy with beautiful UI and comprehensive analytics.
+Hey there! 👋 I built this typing app because I was tired of the same old boring typing tests out there. I wanted something that actually felt good to use, looked modern, and helped me improve my typing skills in a meaningful way.
 
-## 🚀 Features
+## What's This About?
 
-### Core Typing Features
-- **Real-time WPM calculation** with accurate word-per-minute tracking
-- **Live accuracy monitoring** with error highlighting
-- **Multiple text sources**: Quotes, Programming code, Lorem ipsum
-- **Character-by-character feedback** with color-coded accuracy
-- **Auto-completion detection** with confetti celebration
-- **Keyboard shortcuts** for quick navigation
+This is a typing test app I built with React and TypeScript. It's got all the usual stuff like WPM tracking and accuracy measurement, but I also added some cool features that make it actually fun to use:
 
-### Advanced Analytics
-- **Comprehensive statistics dashboard** with charts and graphs
-- **Historical performance tracking** with detailed metrics
-- **WPM progress visualization** using Recharts
-- **Accuracy distribution analysis**
-- **Performance trends** over time
-- **Best scores and averages** tracking
+- **Real-time feedback** - You see your mistakes highlighted as you type
+- **Multiple text sources** - Quotes, programming code, random words, whatever floats your boat
+- **Nice animations** - Because who doesn't love a good confetti celebration when you finish?
+- **Dark/light mode** - Because my eyes get tired staring at bright screens all day
+- **Sound effects** - Optional, but satisfying when you nail a word
 
-### Modern UI/UX
-- **Glass morphism design** with beautiful gradients
-- **Smooth animations** using Framer Motion
-- **Responsive design** that works on all devices
-- **Dark/Light theme support**
-- **Customizable settings** for personalized experience
-- **Toast notifications** for user feedback
+## The Tech Stuff
 
-### Technical Features
-- **TypeScript** for type safety and better development experience
-- **Tailwind CSS** for modern, utility-first styling
-- **React Hooks** for state management
-- **Component-based architecture** for maintainability
-- **Performance optimized** with efficient re-renders
+I used:
+- **React** with TypeScript (because I like my code to actually work)
+- **Tailwind CSS** (because writing CSS from scratch is the worst)
+- **Framer Motion** for animations (makes everything feel smooth)
+- **Recharts** for the stats (because I'm a data nerd)
 
-## 🛠️ Tech Stack
+## Getting Started
 
-- **Frontend**: React 19, TypeScript, Tailwind CSS
-- **Animations**: Framer Motion
-- **Charts**: Recharts
-- **Icons**: Lucide React
-- **Notifications**: React Hot Toast
-- **Effects**: React Confetti
+If you want to run this locally:
 
-## 📦 Installation
+```bash
+# Clone it
+git clone <your-repo-url>
+cd typing-app/client
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd typing-app/client
-   ```
+# Install the dependencies
+npm install
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Start the development server**
-   ```bash
-   npm start
-   ```
-
-4. **Build for production**
-   ```bash
-   npm run build
-   ```
-
-## 🎯 Usage
-
-### Typing Test
-1. Select your preferred text source (Quotes, Programming, or Lorem)
-2. Click "Start Test" or begin typing to automatically start
-3. Type the displayed text as accurately as possible
-4. View real-time statistics (WPM, accuracy, errors)
-5. Complete the test to see your results and celebrate with confetti!
-
-### Statistics Dashboard
-- View your typing performance over time
-- Analyze WPM trends and accuracy distribution
-- Track your best scores and improvements
-- Monitor total time spent practicing
-
-### Settings
-- Customize theme (light/dark)
-- Adjust font size and display options
-- Toggle sound effects and visual feedback
-- Configure keyboard shortcuts
-
-## 🎨 Customization
-
-### Adding New Text Sources
-Add new text categories in `AdvancedTypingTest.tsx`:
-
-```typescript
-const TEXT_SOURCES = {
-  // ... existing sources
-  newCategory: [
-    "Your custom text here",
-    "More text samples..."
-  ]
-};
+# Start the dev server
+npm start
 ```
 
-### Styling Customization
-Modify `tailwind.config.js` to customize colors, animations, and design tokens.
+That's it! Open http://localhost:3000 and start typing.
 
-### Component Structure
+## How to Use It
+
+1. **Pick your poison** - Choose what kind of text you want to type (quotes, code, etc.)
+2. **Start typing** - Just start typing and the timer will begin automatically
+3. **Watch your stats** - WPM, accuracy, and errors update in real-time
+4. **Finish strong** - Complete the text and see your results with some celebratory confetti
+
+The app saves your results locally, so you can track your progress over time. Check out the Statistics page to see how you're improving.
+
+## Features I'm Proud Of
+
+### The Typing Experience
+I spent way too much time getting the typing feel just right. The cursor blinks properly, errors are highlighted immediately, and the text flows naturally. It's the little things that make it feel polished.
+
+### The Stats Dashboard
+I'm a sucker for data visualization, so I went all out on the statistics page. You get charts showing your WPM progress, accuracy distribution, and all that good stuff. It's actually motivating to see your improvement over time.
+
+### The Settings
+I made it customizable because everyone has different preferences. You can adjust font size, toggle sounds, change themes, and more. It's your typing experience, after all.
+
+## User Accounts & Vocabulary Learning
+
+I recently added user authentication with Supabase and an adaptive vocabulary learning system. Now you can:
+
+- **Sign up/sign in** to save your progress across devices
+- **Learn new words** while typing - the app tracks which words you struggle with
+- **Spaced repetition** - Words you miss come back for review at the right intervals
+- **Personalized practice** - The app learns what you need to work on
+
+Check out the `SUPABASE_SETUP.md` file if you want to set this up for yourself.
+
+## Building for Production
+
+```bash
+npm run build
+```
+
+This creates a `build` folder you can deploy anywhere. I've deployed it on Vercel and it works great.
+
+## The Code Structure
+
 ```
 src/
-├── components/
-│   ├── AdvancedTypingTest.tsx    # Main typing interface
-│   ├── Navigation.tsx            # App navigation
-│   ├── Statistics.tsx            # Analytics dashboard
+├── components/          # React components
+│   ├── AdvancedTypingTest.tsx    # The main typing interface
+│   ├── Statistics.tsx            # Charts and analytics
 │   ├── Settings.tsx              # User preferences
-│   └── TypingBoxV2.tsx           # Legacy component
-├── App.tsx                       # Main app component
-└── index.css                     # Global styles
+│   └── AuthPanel.tsx             # Login/signup stuff
+├── services/           # Business logic and API calls
+│   ├── textGenerator.ts          # Gets random text to type
+│   ├── vocabularyGenerator.ts    # Handles word learning
+│   ├── adaptiveVocab.ts          # Spaced repetition logic
+│   └── supabaseClient.ts         # Database connection
+└── App.tsx             # Main app component
 ```
 
-## 🚀 Deployment
+## What I Learned Building This
 
-### Vercel (Recommended)
-1. Connect your GitHub repository to Vercel
-2. Vercel will automatically detect the React app
-3. Deploy with one click
+- **React Hooks** are amazing for state management
+- **TypeScript** catches so many bugs before they happen
+- **Tailwind CSS** makes styling actually enjoyable
+- **User experience** matters way more than I initially thought
+- **Performance optimization** is crucial for smooth typing
 
-### Netlify
-1. Build the project: `npm run build`
-2. Upload the `build` folder to Netlify
-3. Configure build settings if needed
+## Contributing
 
-### Other Platforms
-The app can be deployed to any static hosting service that supports React applications.
+Found a bug? Want to add a feature? Feel free to open an issue or submit a pull request. I'm always open to improvements!
 
-## 📊 Performance Metrics
+## License
 
-- **Lighthouse Score**: 95+ (Performance, Accessibility, Best Practices, SEO)
-- **Bundle Size**: Optimized with modern build tools
-- **Load Time**: < 2 seconds on average connection
-- **Responsive**: Works perfectly on mobile, tablet, and desktop
-
-## 🔧 Development
-
-### Available Scripts
-- `npm start` - Start development server
-- `npm run build` - Build for production
-- `npm test` - Run tests
-- `npm run eject` - Eject from Create React App
-
-### Code Style
-- TypeScript for type safety
-- ESLint for code quality
-- Prettier for code formatting
-- Component-based architecture
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📝 License
-
-This project is licensed under the MIT License.
-
-## 🙏 Acknowledgments
-
-- Icons by [Lucide](https://lucide.dev/)
-- Charts by [Recharts](https://recharts.org/)
-- Animations by [Framer Motion](https://www.framer.com/motion/)
-- Styling by [Tailwind CSS](https://tailwindcss.com/)
+MIT License - do whatever you want with it.
 
 ---
 
-**Built with ❤️ for typing enthusiasts everywhere!**
+Thanks for checking out my typing app! I hope it helps you improve your typing skills as much as building it helped me improve my coding skills.
+
+Happy typing! ⌨️
